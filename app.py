@@ -1,15 +1,11 @@
 import pandas as pd
-import numpy as np
+import streamlit as st
+import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
-from imblearn.over_sampling import SMOTE
-
-import streamlit as st
-import plotly.express as px
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils import resample
 MODEL_FEATURES = ['racePosition', 'weighted_wins', 'avg_position', 'podiums', 'normalized_points']
 # Load and preprocess the data
 @st.cache_data
@@ -61,64 +57,25 @@ def train_model(data):
     X = data[MODEL_FEATURES]
     y = data['champion']
 
-    # Handle class imbalance using SMOTE
-    smote = SMOTE(random_state=42)
-    X_resampled, y_resampled = smote.fit_resample(X, y)
+    # Handle class imbalance using resampling
+    X_resampled, y_resampled = resample(X[y == 1], y[y == 1], replace=True, n_samples=X[y == 0].shape[0], random_state=42)
+    X_resampled = pd.concat([X[y == 0], X_resampled])
+    y_resampled = pd.concat([y[y == 0], y_resampled])
 
-    # Split the resampled data
     X_train, X_test, y_train, y_test = train_test_split(X_resampled, y_resampled, test_size=0.2, random_state=42)
-
-    # Define the parameter grid for RandomizedSearchCV
-    param_dist = {
-        'n_estimators': [100, 200, 300],
-        'max_depth': [None, 10, 20, 30],
-        'min_samples_split': [2, 5, 10],
-        'min_samples_leaf': [1, 2, 4],
-        'max_features': ['auto', 'sqrt'],
-        'class_weight': [None, 'balanced']
-    }
-
-    # Initialize the Random Forest classifier
-    rf = RandomForestClassifier(random_state=42)
-
-    # Perform RandomizedSearchCV
-    random_search = RandomizedSearchCV(
-        estimator=rf, 
-        param_distributions=param_dist, 
-        n_iter=20,  # Number of parameter settings sampled
-        cv=5, 
-        n_jobs=-1, 
-        verbose=1, 
-        scoring='roc_auc',
-        random_state=42
-    )
-    random_search.fit(X_train, y_train)
-
-    # Get the best model
-    best_model = random_search.best_estimator_
-
-    # Make predictions on the test set
-    y_pred = best_model.predict(X_test)
-    y_pred_proba = best_model.predict_proba(X_test)[:, 1]
-
-    # Calculate metrics
+    model = RandomForestClassifier(random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
-    roc_auc = roc_auc_score(y_test, y_pred_proba)
-
-    return best_model, X_test, y_test, y_pred, accuracy, roc_auc
+    roc_auc = roc_auc_score(y_test, y_pred)
+    return model, X_test, y_test, y_pred, accuracy, roc_auc
 def predict_championship(model):
-    st.sidebar.header("Enter Driver Details")
-    
-    # Create input fields for each feature
-    
-    # Input fields for model features
     race_position = st.sidebar.number_input('Race Position', min_value=1, max_value=100, step=1)
     weighted_wins = st.sidebar.number_input('Wins', min_value=0, max_value=100, step=1)
     avg_position = st.sidebar.number_input('Average Position', min_value=1, max_value=100, step=1)
     podiums = st.sidebar.number_input('Podiums', min_value=0, max_value=100, step=1)
     normalized_points = st.sidebar.number_input('Points', min_value=0, max_value=1000, step=1)
 
-    # Collect input data
     input_data = pd.DataFrame({
         'racePosition': [race_position],
         'weighted_wins': [weighted_wins],
@@ -137,14 +94,24 @@ def predict_championship(model):
         st.sidebar.error("This driver is not predicted to be the champion.")
     st.sidebar.write(f"Probability of being champion: {probability:.2%}")
 
+
 def plot_feature_importance(model, feature_names):
     importance = model.feature_importances_
-    fig = px.bar(x=feature_names, y=importance, labels={'x': 'Features', 'y': 'Importance'}, title='Feature Importance')
-    st.plotly_chart(fig)
+    fig, ax = plt.subplots()
+    ax.bar(feature_names, importance)
+    ax.set_xlabel('Features')
+    ax.set_ylabel('Importance')
+    ax.set_title('Feature Importance')
+    st.pyplot(fig)
 
 def plot_driver_performance(data):
-    fig = px.scatter(data, x='qualiPosition', y='racePosition', color='points', title='Driver Performance vs Qualification')
-    st.plotly_chart(fig)
+    fig, ax = plt.subplots()
+    scatter = ax.scatter(data['qualiPosition'], data['racePosition'], c=data['points'], cmap='viridis')
+    ax.set_xlabel('Qualification Position')
+    ax.set_ylabel('Race Position')
+    ax.set_title('Driver Performance vs Qualification')
+    fig.colorbar(scatter, ax=ax, label='Points')
+    st.pyplot(fig)
 
 
 def main():
@@ -160,7 +127,6 @@ def main():
 
     model, X_test, y_test, y_pred, accuracy, roc_auc = train_model(processed_data)
 
-  
 
     # Call the new prediction function
     predict_championship(model)
